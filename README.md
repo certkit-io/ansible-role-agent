@@ -59,7 +59,7 @@ Lock to a specific version:
 
 ## Notes
 
-- This role mirrors the Linux installation steps from `scripts/install.sh`. The end result should be the same, but automated with Ansible.
+- This role mirrors the Linux installation steps from [`certkit-agent/scripts/install.sh`](https://github.com/certkit-io/certkit-agent/blob/main/scripts/install.sh). The end result should be the same, but automated with Ansible.
 
 ## License
 
