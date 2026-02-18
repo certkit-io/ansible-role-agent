@@ -1,0 +1,5 @@
+---
+certkit_service_name: certkit-agent
+certkit_config_path: /etc/certkit-agent/config.json
+certkit_agent_version: "latest"
+certkit_force_reregister: false

@@ -1,0 +1,6 @@
+---
+- name: Restart certkit-agent service
+  ansible.builtin.service:
+    name: "{{ certkit_service_name }}"
+    enabled: true
+    state: restarted

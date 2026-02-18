@@ -1,0 +1,241 @@
+---
+#
+# Check and clean up variables
+#
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - certkit_registration_key is defined
+      - certkit_registration_key | trim | length > 0
+    fail_msg: >-
+      The variable 'certkit_registration_key' must be set
+      to install certkit-agent. Your key should look like: 'abcd.123...
+      Get your registration key from the agents page of your
+      application at https://app.certkit.io
+
+- name: Check for valid variables
+  ansible.builtin.assert:
+    that:
+      - certkit_service_name is defined
+      - certkit_service_name | trim | length > 0
+      - certkit_config_path is defined
+      - certkit_config_path | trim | length > 0
+      - certkit_agent_version is defined
+      - certkit_agent_version | trim | length > 0
+    fail_msg: >-
+      Variables 'certkit_service_name', 'certkit_config_path', 
+      and 'certkit_agent_version' must be set
+      to non-empty values for certkit-agent installation.
+
+- name: Normalize certkit_agent_version
+  ansible.builtin.set_fact:
+    certkit_agent_version_normalized: >-
+      {{
+        certkit_agent_version | trim
+        if (
+          (certkit_agent_version | trim | lower == 'latest')
+          or (certkit_agent_version | trim | regex_search('^v'))
+        )
+        else 'v' ~ (certkit_agent_version | trim)
+      }}
+    certkit_agent_use_latest: >-
+      {{ certkit_agent_version | trim | lower == 'latest' }}
+
+- name: Determine certkit-agent release architecture for host
+  ansible.builtin.set_fact:
+    certkit_agent_arch: "{{ certkit_arch_map[ansible_architecture] | default('') }}"
+  vars:
+    certkit_arch_map:
+      x86_64: amd64
+      amd64: amd64
+      aarch64: arm64
+      arm64: arm64
+
+- name: Fail on unsupported architecture
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported architecture '{{ ansible_architecture }}'.
+      Supported values are x86_64/amd64 and aarch64/arm64.
+  when: certkit_agent_arch | length == 0
+
+#
+# Determine certkit-agent version
+#
+- name: Normalize certkit-agent version
+  ansible.builtin.set_fact:
+    certkit_agent_release_tag: "{{ certkit_agent_version_normalized }}"
+  when: not certkit_agent_use_latest
+
+- name: Get latest certkit-agent release metadata
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/certkit-io/certkit-agent/releases/latest
+    method: GET
+    headers:
+      Accept: application/vnd.github+json
+      User-Agent: ansible-certkit-agent-role
+      X-GitHub-Api-Version: "2022-11-28"
+    return_content: true
+    status_code: 200
+  register: certkit_agent_latest_release
+  when: certkit_agent_use_latest
+
+- name: Get latest certkit-agent release tag
+  ansible.builtin.set_fact:
+    certkit_agent_release_tag: "{{ certkit_agent_latest_release.json.tag_name }}"
+  when: certkit_agent_use_latest
+
+- name: Check release tag
+  ansible.builtin.assert:
+    that:
+      - certkit_agent_release_tag is defined
+      - certkit_agent_release_tag | trim | length > 0
+    fail_msg: "Could not determine certkit-agent release tag to install."
+
+- name: Determine release download url
+  ansible.builtin.set_fact:
+    certkit_agent_binary_name: "certkit-agent_linux_{{ certkit_agent_arch }}"
+    certkit_agent_release_base_url: >-
+      https://github.com/certkit-io/certkit-agent/releases/download/{{ certkit_agent_release_tag }}
+
+- name: Check if certkit-agent binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/certkit-agent
+  register: certkit_installed_agent_binary
+
+- name: Get installed certkit-agent version
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/certkit-agent
+  register: certkit_agent_usage_output
+  changed_when: false
+  failed_when: false
+  when: certkit_installed_agent_binary.stat.exists
+
+- name: Parse installed certkit-agent version
+  ansible.builtin.set_fact:
+    certkit_agent_installed_tag: >-
+      {{
+        (
+          (
+            (certkit_agent_usage_output.stdout | default(''))
+            ~ '\n' ~
+            (certkit_agent_usage_output.stderr | default(''))
+          )
+          | regex_findall('(?im)Certkit Agent\s+(v[^\s]+)')
+          | first
+          | default('')
+        )
+        if certkit_installed_agent_binary.stat.exists
+        else ''
+      }}
+
+- name: Determine whether binary update is required
+  ansible.builtin.set_fact:
+    certkit_agent_binary_needs_update: >-
+      {{
+        (not certkit_installed_agent_binary.stat.exists)
+        or (certkit_agent_installed_tag | length == 0)
+        or (certkit_agent_installed_tag != certkit_agent_release_tag)
+      }}
+
+#
+# Download and install certkit-agent
+#
+- name: Download and install certkit-agent binary
+  block:
+    - name: Download release checksums
+      ansible.builtin.uri:
+        url: "{{ certkit_agent_release_base_url }}/certkit-agent_SHA256SUMS.txt"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: certkit_agent_checksums_response
+
+    - name: Extract checksum for binary
+      ansible.builtin.set_fact:
+        certkit_agent_binary_checksum: >-
+          {{
+            (
+              certkit_agent_checksums_response.content
+              | regex_findall('(?m)^([a-fA-F0-9]{64})\s+' ~ (certkit_agent_binary_name | regex_escape) ~ '\s*$')
+              | first
+              | default('')
+            )
+            | lower
+          }}
+
+    - name: Ensure checksum was found
+      ansible.builtin.assert:
+        that:
+          - certkit_agent_binary_checksum | length == 64
+        fail_msg: >-
+          Checksum was wrong length for '{{ certkit_agent_binary_name }}' in
+          certkit-agent_SHA256SUMS.txt from release {{ certkit_agent_release_tag }}.
+          Checksum was '{{ certkit_agent_binary_checksum }}'
+
+    - name: Download certkit-agent binary
+      ansible.builtin.get_url:
+        url: "{{ certkit_agent_release_base_url }}/{{ certkit_agent_binary_name }}"
+        dest: /usr/local/bin/certkit-agent
+        owner: root
+        group: root
+        mode: "0755"
+        checksum: "sha256:{{ certkit_agent_binary_checksum }}"
+        force: true
+      notify: Restart certkit-agent service
+  when: certkit_agent_binary_needs_update
+
+- name: Check if certkit-agent config exists
+  ansible.builtin.stat:
+    path: "{{ certkit_config_path }}"
+  register: certkit_agent_config_file
+
+- name: Gather installed service facts
+  ansible.builtin.service_facts:
+
+- name: Check if target service is installed
+  ansible.builtin.set_fact:
+    certkit_agent_service_present: "{{ (certkit_service_name ~ '.service') in (ansible_facts.services | default({})) }}"
+
+- name: Force re-register (1/2) - delete existing certkit-agent config
+  ansible.builtin.file:
+    path: "{{ certkit_config_path }}"
+    state: absent
+  when:
+    - certkit_force_reregister | bool
+
+- name: Force re-register (2/2) - Run certkit-agent register
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/certkit-agent
+      - register
+      - "{{ certkit_registration_key }}"
+      - --config
+      - "{{ certkit_config_path }}"
+  no_log: true
+  when: certkit_force_reregister | bool
+  changed_when: true
+  notify: Restart certkit-agent service
+
+- name: Run certkit-agent install
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/certkit-agent
+      - install
+      - --key
+      - "{{ certkit_registration_key }}"
+      - --service-name
+      - "{{ certkit_service_name }}"
+      - --config
+      - "{{ certkit_config_path }}"
+  no_log: true
+  when: >-
+    (not certkit_agent_config_file.stat.exists)
+    or (not certkit_agent_service_present)
+  changed_when: true
+
+- name: Ensure certkit-agent service is enabled and started
+  ansible.builtin.service:
+    name: "{{ certkit_service_name }}"
+    enabled: true
+    state: started
