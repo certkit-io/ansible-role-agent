@@ -129,13 +129,28 @@
         else ''
       }}
 
+- name: Normalize certkit-agent versions for comparison
+  ansible.builtin.set_fact:
+    certkit_agent_release_version: "{{ certkit_agent_release_tag | regex_replace('^v', '') }}"
+    certkit_agent_installed_version: "{{ certkit_agent_installed_tag | regex_replace('^v', '') }}"
+
 - name: Determine whether binary update is required
   ansible.builtin.set_fact:
     certkit_agent_binary_needs_update: >-
       {{
         (not certkit_installed_agent_binary.stat.exists)
         or (certkit_agent_installed_tag | length == 0)
-        or (certkit_agent_installed_tag != certkit_agent_release_tag)
+        or (
+          (certkit_allow_downgrade | bool)
+          and (certkit_agent_installed_tag != certkit_agent_release_tag)
+        )
+        or (
+          (not certkit_allow_downgrade | bool)
+          and (
+            certkit_agent_release_version
+            is version(certkit_agent_installed_version, '>')
+          )
+        )
       }}
 
 #

@@ -8,6 +8,7 @@ An Ansible role for Linux that installs and configures [`certkit-agent`](https:/
 - Downloads the latest release by default from [certkit-agent releases](https://github.com/certkit-io/certkit-agent/releases).
 - Will update certkit-agent to newest version by default.
   - Locking to a specific version is supported.
+  - By default, the role will not downgrade to an older agent version.
 - Registers newly installed agents with your Certkit account.
 
 ## Requirements
@@ -29,6 +30,8 @@ An Ansible role for Linux that installs and configures [`certkit-agent`](https:/
 - `certkit_agent_version` (optional): Version selector to install.
   - Default: `latest`
   - Accepted formats: `latest`, `v1.5.0`, or `1.5.0`
+- `certkit_allow_downgrade` (optional): Allow downgrading when the requested version is lower than the installed version.
+  - Default: `false`
 - `certkit_force_reregister` (optional): Force agent re-registration by deleting existing config and running `certkit-agent register`. In general, this should not be needed. Only use if you need to replace an invalid registration key.
   - Default: `false`
 
