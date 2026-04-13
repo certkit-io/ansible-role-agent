@@ -2,6 +2,8 @@
 
 An Ansible role for Linux that installs and configures [`certkit-agent`](https://github.com/certkit-io/certkit-agent). This allowed automated deployment of Certkit managed certificates across many machines.
 
+Published in Ansible Galaxy here: [certkit_io.agent](https://galaxy.ansible.com/ui/standalone/roles/certkit_io/agent/).
+
 ## Overview
 
 - Installs `certkit-agent` to `/usr/local/bin/certkit-agent`.
